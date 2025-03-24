@@ -1,0 +1,77 @@
+import logging
+import re
+import os
+import html
+import pandas as pd 
+import numpy as np
+
+# Defina o caminho para os logs
+log_path = '/var/log/'
+
+# Defina os padrões de log que você deseja monitorar
+patterns = [
+    r'failed login attempt',
+    r'unauthorized access',
+    r'malicious activity',
+]
+
+# Compila regex uma única vez para evitar ReDoS
+compiled_patterns = [re.compile(pattern) for pattern in patterns]
+
+# Remover sequências ANSI maliciosas para evitar falsificação de logs
+ansi_escape = re.compile(r'(\x1B\[[0-?]*[ -/]*[@-~])')
+
+# Defina o nível de log
+logging_level = logging.INFO
+
+# Crie um logger
+logger = logging.getLogger('monitor_logs')
+logger.setLevel(logging_level)
+
+# Crie um arquivo de log com permissões seguras
+log_file = 'monitor_log.log'
+handler = logging.FileHandler(log_file)
+handler.setLevel(logging_level)
+
+# Defina permissões seguras para o log
+os.chmod(log_file, 0o600)
+
+# Crie um formatter
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+
+# Adicione o handler ao logger
+logger.addHandler(handler)
+
+# Caminho real do diretório base
+real_base_path = os.path.realpath(log_path)
+
+# Função para monitorar logs
+def monitor_logs():
+    for root, dirs, files in os.walk(log_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+
+            # Garante que o arquivo está dentro do diretório permitido
+            if not os.path.realpath(file_path).startswith(real_base_path):
+                logger.warning(f'Tentativa de acessar um arquivo fora do diretório permitido: {file_path}')
+                continue
+
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='strict') as f:
+                    for line in f:
+                        if isinstance(line, str) and len(line) > 0:
+                            for regex in compiled_patterns:
+                                if regex.search(line):
+                                    # Remove caracteres ANSI maliciosos e escapa HTML
+                                    safe_line = ansi_escape.sub('', html.escape(line.strip()))
+                                    logger.info(f'Log suspeito encontrado em {file_path}: {safe_line}')
+            except (OSError, IOError) as e:
+                logger.error(f'Erro de I/O ao ler arquivo {file_path}: {str(e)}')
+            except UnicodeDecodeError:
+                logger.error(f'Erro de decodificação ao ler arquivo {file_path}')
+            except Exception as e:
+                logger.error(f'Erro inesperado ao processar {file_path}: {str(e)}')
+
+# Execute a função de monitoramento
+monitor_logs()
